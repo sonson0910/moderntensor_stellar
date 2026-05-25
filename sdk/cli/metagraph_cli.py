@@ -74,6 +74,34 @@ def subnet_cmd(subnet_id):
     console.print(table)
 
 
+@metagraph_cli.command("subnet-policy")
+def subnet_policy_cmd():
+    policy = _client().get_subnet_creation_policy()
+    if not policy:
+        console.print(Panel("not found", title="Subnet Creation Policy"))
+        return
+    table = Table(title="Subnet Creation Policy")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("max_subnets", str(policy.max_subnets))
+    table.add_row("subnet_count", str(policy.subnet_count))
+    table.add_row("subnet_registration_fee", f"{policy.subnet_registration_fee:.6f}")
+    console.print(table)
+
+
+@metagraph_cli.command("update-subnet-policy")
+@click.option("--max-subnets", required=True, type=int)
+@click.option("--subnet-registration-fee", required=True, type=float)
+@click.option("--source", default=None)
+def update_subnet_policy_cmd(max_subnets, subnet_registration_fee, source):
+    tx = _client().update_subnet_creation_policy(
+        max_subnets,
+        subnet_registration_fee,
+        source_account=source,
+    )
+    console.print(Panel(tx or "submitted", title="Update Subnet Creation Policy"))
+
+
 @metagraph_cli.command("query")
 @click.option("--role", type=click.Choice(["miner", "validator"]), required=True)
 @click.option("--uid", default=None)

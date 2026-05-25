@@ -16,11 +16,12 @@ Mainnet is locked by default. This repository is production-grade for Stellar Te
 ModernTensor now treats each subnet as an explicit on-chain domain:
 
 - `SubnetConfig`: owner, commit authority, stake token, treasury, status, and emission split.
+- `SubnetCreationPolicy`: max subnet count, current subnet count, and optional subnet registration fee.
 - `ParticipantStatic`: UID, role, owner/regkey, endpoint, locked stake, and registration ledger.
 - `ParticipantDynamic`: status, performance, trust, latest cycle, rolling history hash, and reward balance.
 - `CycleCommit`: cycle root, updates root, quorum weight, distributed rewards, and commit ledger.
 
-Subnet 1 is created by `init`. Additional subnets use `init_subnet`, and all subnet-specific functions have `*_for_subnet` variants. The Python client defaults to `SUBNET_ID=1`.
+Subnet 1 is created by `init`. Additional subnets use `init_subnet`, require admin approval plus owner consent, obey the global subnet cap, and can charge a subnet registration fee into the new subnet's reward reserve. All subnet-specific functions have `*_for_subnet` variants. The Python client defaults to `SUBNET_ID=1`.
 
 Cycle flow:
 
@@ -38,6 +39,7 @@ Tokenomics is account-based and auditable on-chain:
 
 - Registration locks native test XLM via the Stellar Asset Contract.
 - Each subnet has a dynamic registration policy: max miners, max validators, role-specific minimum stake, and optional registration fee.
+- The network has a dynamic subnet creation policy: max subnet count and optional subnet creation fee.
 - The participant owner public key is the reg key; the contract rejects duplicate owner/regkey for the same role in the same subnet.
 - `fund_rewards` moves reward capital into the subnet reward reserve.
 - `emission_per_cycle` caps how much reserve can be distributed in one cycle.
@@ -100,6 +102,8 @@ mtcli chain fund G...
 mtcli metagraph query --role miner --uid miner-1
 mtcli metagraph query --role miner --page-size 100 --cursor 0
 mtcli metagraph subnet
+mtcli metagraph subnet-policy
+mtcli metagraph update-subnet-policy --max-subnets 256 --subnet-registration-fee 1
 mtcli metagraph update-tokenomics --emission-per-cycle 1 --miner-emission-bps 8000 --validator-emission-bps 2000
 mtcli metagraph update-registration --max-miners 10000 --max-validators 1000 --min-miner-stake 1 --min-validator-stake 10 --registration-fee 0.1
 mtcli metagraph cycle --cycle 10
@@ -155,13 +159,14 @@ Release operators should complete the on-chain flow in this order:
 1. Build the contract with `stellar contract build`.
 2. Deploy with `mtcli metagraph deploy --wasm contracts/metagraph/target/wasm32v1-none/release/moderntensor_metagraph.wasm`.
 3. Initialize with `mtcli metagraph init --admin G... --stake-token C...`.
-4. Set emission policy with `mtcli metagraph update-tokenomics --emission-per-cycle 1 --miner-emission-bps 8000 --validator-emission-bps 2000`.
-5. Set registration policy with `mtcli metagraph update-registration --max-miners 10000 --max-validators 1000 --min-miner-stake 1 --min-validator-stake 10 --registration-fee 0.1`.
-6. Fund the reward reserve with `mtcli metagraph fund-rewards --from-account G... --amount 100`.
-7. Register validators and miners with `mtcli metagraph register-validator` and `mtcli metagraph register-miner`.
-8. Commit a scored cycle from the configured commit authority with `mtcli node run-cycle`.
-9. Verify balances with `mtcli metagraph reward-balance` and claim with `mtcli metagraph claim-rewards`.
-10. Use `pause-subnet`, `resume-subnet`, `request-unbond`, `withdraw-unbonded`, and `slash-stake` for lifecycle operations.
+4. Set subnet creation policy with `mtcli metagraph update-subnet-policy --max-subnets 256 --subnet-registration-fee 1`.
+5. Set emission policy with `mtcli metagraph update-tokenomics --emission-per-cycle 1 --miner-emission-bps 8000 --validator-emission-bps 2000`.
+6. Set registration policy with `mtcli metagraph update-registration --max-miners 10000 --max-validators 1000 --min-miner-stake 1 --min-validator-stake 10 --registration-fee 0.1`.
+7. Fund the reward reserve with `mtcli metagraph fund-rewards --from-account G... --amount 100`.
+8. Register validators and miners with `mtcli metagraph register-validator` and `mtcli metagraph register-miner`.
+9. Commit a scored cycle from the configured commit authority with `mtcli node run-cycle`.
+10. Verify balances with `mtcli metagraph reward-balance` and claim with `mtcli metagraph claim-rewards`.
+11. Use `pause-subnet`, `resume-subnet`, `request-unbond`, `withdraw-unbonded`, and `slash-stake` for lifecycle operations.
 
 For production-like Stellar Testnet runs, confirm:
 

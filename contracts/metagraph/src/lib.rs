@@ -17,6 +17,7 @@ const DEFAULT_MAX_MINERS: u32 = 10_000;
 const DEFAULT_MAX_VALIDATORS: u32 = 1_000;
 const DEFAULT_MIN_MINER_STAKE: i128 = 1;
 const DEFAULT_MIN_VALIDATOR_STAKE: i128 = 1;
+const DEFAULT_MAX_SUBNETS: u32 = 256;
 
 #[contracttype]
 #[derive(Clone, Eq, PartialEq)]
@@ -113,9 +114,20 @@ pub struct SubnetConfig {
 }
 
 #[contracttype]
+#[derive(Clone)]
+pub struct SubnetCreationPolicy {
+    pub max_subnets: u32,
+    pub subnet_count: u32,
+    pub subnet_registration_fee: i128,
+}
+
+#[contracttype]
 pub enum DataKey {
     Admin,
     StakeToken,
+    MaxSubnets,
+    SubnetCount,
+    SubnetRegistrationFee,
     Subnet(u32),
     Static(u32, Role, u64),
     Dynamic(u32, Role, u64),
@@ -141,6 +153,13 @@ impl MetagraphRegistry {
         env.storage()
             .instance()
             .set(&DataKey::StakeToken, &stake_token);
+        env.storage()
+            .persistent()
+            .set(&DataKey::MaxSubnets, &DEFAULT_MAX_SUBNETS);
+        env.storage().persistent().set(&DataKey::SubnetCount, &1u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SubnetRegistrationFee, &0i128);
         Self::write_subnet(
             &env,
             SubnetConfig {
@@ -175,14 +194,28 @@ impl MetagraphRegistry {
         validator_emission_bps: u32,
     ) {
         Self::admin(&env).require_auth();
+        owner.require_auth();
         Self::validate_subnet_id(subnet_id);
         Self::validate_tokenomics(
             emission_per_cycle,
             miner_emission_bps,
             validator_emission_bps,
         );
+        Self::validate_subnet_capacity(&env);
         if env.storage().persistent().has(&DataKey::Subnet(subnet_id)) {
             panic!("subnet exists");
+        }
+        let subnet_registration_fee = Self::subnet_registration_fee(&env);
+        if subnet_registration_fee > 0 {
+            let token_client = token::Client::new(&env, &stake_token);
+            token_client.transfer(
+                &owner,
+                &env.current_contract_address(),
+                &subnet_registration_fee,
+            );
+            env.storage()
+                .persistent()
+                .set(&DataKey::RewardReserve(subnet_id), &subnet_registration_fee);
         }
         Self::write_subnet(
             &env,
@@ -203,6 +236,48 @@ impl MetagraphRegistry {
                 status: STATUS_ACTIVE,
                 created_ledger: env.ledger().sequence(),
             },
+        );
+        Self::increment_subnet_count(&env);
+    }
+
+    pub fn get_subnet_creation_policy(env: Env) -> SubnetCreationPolicy {
+        SubnetCreationPolicy {
+            max_subnets: env
+                .storage()
+                .persistent()
+                .get(&DataKey::MaxSubnets)
+                .unwrap_or(DEFAULT_MAX_SUBNETS),
+            subnet_count: env
+                .storage()
+                .persistent()
+                .get(&DataKey::SubnetCount)
+                .unwrap_or(0),
+            subnet_registration_fee: Self::subnet_registration_fee(&env),
+        }
+    }
+
+    pub fn update_subnet_creation_policy(
+        env: Env,
+        max_subnets: u32,
+        subnet_registration_fee: i128,
+    ) {
+        Self::admin(&env).require_auth();
+        let subnet_count = Self::subnet_count(&env);
+        if max_subnets == 0 || max_subnets < subnet_count {
+            panic!("invalid subnet cap");
+        }
+        if subnet_registration_fee < 0 {
+            panic!("invalid subnet fee");
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::MaxSubnets, &max_subnets);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SubnetRegistrationFee, &subnet_registration_fee);
+        env.events().publish(
+            (symbol_short!("netpol"), max_subnets),
+            subnet_registration_fee,
         );
     }
 
@@ -1028,6 +1103,39 @@ impl MetagraphRegistry {
             .expect("missing subnet")
     }
 
+    fn subnet_count(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SubnetCount)
+            .unwrap_or(0)
+    }
+
+    fn subnet_registration_fee(env: &Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SubnetRegistrationFee)
+            .unwrap_or(0)
+    }
+
+    fn validate_subnet_capacity(env: &Env) {
+        let count = Self::subnet_count(env);
+        let max_subnets = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MaxSubnets)
+            .unwrap_or(DEFAULT_MAX_SUBNETS);
+        if count >= max_subnets {
+            panic!("subnet registration full");
+        }
+    }
+
+    fn increment_subnet_count(env: &Env) {
+        let count = Self::subnet_count(env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SubnetCount, &(count + 1));
+    }
+
     fn write_subnet(env: &Env, subnet: SubnetConfig) {
         env.storage()
             .persistent()
@@ -1643,6 +1751,78 @@ mod tests {
             1
         );
         assert_eq!(client.get_subnet(&2).unwrap().subnet_id, 2);
+    }
+
+    #[test]
+    fn subnet_creation_policy_caps_and_fees_new_subnets() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let subnet_owner = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let token_client = token::Client::new(&env, &token_id);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+        let contract_id = env.register(MetagraphRegistry, ());
+        let client = MetagraphRegistryClient::new(&env, &contract_id);
+        client.mock_all_auths().init(&admin, &token_id);
+        token_admin_client
+            .mock_all_auths()
+            .mint(&subnet_owner, &10_000);
+        client
+            .mock_all_auths()
+            .update_subnet_creation_policy(&2, &250);
+
+        let before = token_client.balance(&subnet_owner);
+        client.mock_all_auths().init_subnet(
+            &2,
+            &subnet_owner,
+            &subnet_owner,
+            &token_id,
+            &subnet_owner,
+            &0,
+            &8_000,
+            &2_000,
+        );
+        let policy = client.get_subnet_creation_policy();
+        assert_eq!(policy.max_subnets, 2);
+        assert_eq!(policy.subnet_count, 2);
+        assert_eq!(policy.subnet_registration_fee, 250);
+        assert_eq!(token_client.balance(&subnet_owner), before - 250);
+        assert_eq!(client.reward_reserve(&2), 250);
+    }
+
+    #[test]
+    #[should_panic(expected = "subnet registration full")]
+    fn subnet_creation_cap_rejects_extra_subnet() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let subnet_owner = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+        let contract_id = env.register(MetagraphRegistry, ());
+        let client = MetagraphRegistryClient::new(&env, &contract_id);
+        client.mock_all_auths().init(&admin, &token_id);
+        token_admin_client
+            .mock_all_auths()
+            .mint(&subnet_owner, &10_000);
+        client
+            .mock_all_auths()
+            .update_subnet_creation_policy(&1, &0);
+        client.mock_all_auths().init_subnet(
+            &2,
+            &subnet_owner,
+            &subnet_owner,
+            &token_id,
+            &subnet_owner,
+            &0,
+            &8_000,
+            &2_000,
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@ from .base import (
     MetagraphUpdate,
     StellarNetworkConfig,
     SubnetConfig,
+    SubnetCreationPolicy,
     UnbondRequest,
 )
 
@@ -416,6 +417,27 @@ class StellarChainClient:
             source_account=source_account,
         )
 
+    def get_subnet_creation_policy(self) -> Optional[SubnetCreationPolicy]:
+        raw = self.invoke_contract("get_subnet_creation_policy")
+        return self._parse_subnet_creation_policy(raw)
+
+    def update_subnet_creation_policy(
+        self,
+        max_subnets: int,
+        subnet_registration_fee: float,
+        source_account: Optional[str] = None,
+    ) -> str:
+        return self.invoke_contract(
+            "update_subnet_creation_policy",
+            [
+                "--max_subnets",
+                str(max_subnets),
+                "--subnet_registration_fee",
+                str(int(round(subnet_registration_fee * self.config.token_amount_scale))),
+            ],
+            source_account=source_account,
+        )
+
     def get_subnet(self, subnet_id: Optional[int] = None) -> Optional[SubnetConfig]:
         raw = self.invoke_contract(
             "get_subnet",
@@ -621,6 +643,19 @@ class StellarChainClient:
             registration_fee=float(data.get("registration_fee", 0)) / self.config.token_amount_scale,
             status=int(data.get("status", 0)),
             created_ledger=int(data.get("created_ledger", 0)),
+        )
+
+    def _parse_subnet_creation_policy(self, raw: str) -> Optional[SubnetCreationPolicy]:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        return SubnetCreationPolicy(
+            max_subnets=int(data.get("max_subnets", 0)),
+            subnet_count=int(data.get("subnet_count", 0)),
+            subnet_registration_fee=float(data.get("subnet_registration_fee", 0)) / self.config.token_amount_scale,
         )
 
     def _participant_from_mapping(self, data: Any, role: str) -> Optional[MetagraphParticipant]:

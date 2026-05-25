@@ -103,6 +103,13 @@ class SubnetConfig:
     created_ledger: int = 0
 
 
+@dataclass(frozen=True)
+class SubnetCreationPolicy:
+    max_subnets: int
+    subnet_count: int
+    subnet_registration_fee: float
+
+
 @dataclass
 class MetagraphState:
     miners: List[MetagraphParticipant]
@@ -211,3 +218,14 @@ class ChainClient(Protocol):
         source_account: Optional[str] = None,
     ) -> str:
         """Update subnet registration caps, minimum stake, and fee."""
+
+    def get_subnet_creation_policy(self) -> SubnetCreationPolicy:
+        """Read global subnet creation caps and fee."""
+
+    def update_subnet_creation_policy(
+        self,
+        max_subnets: int,
+        subnet_registration_fee: float,
+        source_account: Optional[str] = None,
+    ) -> str:
+        """Update global subnet creation cap and fee."""

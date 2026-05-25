@@ -341,3 +341,31 @@ def test_get_subnet_parses_registration_policy(config, monkeypatch):
     assert subnet.min_miner_stake == 2.0
     assert subnet.min_validator_stake == 10.0
     assert subnet.registration_fee == 0.1
+
+
+def test_subnet_creation_policy_serialization_and_parsing(config, monkeypatch):
+    client = StellarChainClient(config)
+    captured = []
+
+    def fake_run(args):
+        captured.append(args)
+        if "get_subnet_creation_policy" in args:
+            return '{"max_subnets":256,"subnet_count":3,"subnet_registration_fee":"5000000"}'
+        return "txhash"
+
+    monkeypatch.setattr(client, "_run_stellar_cli", fake_run)
+
+    assert client.update_subnet_creation_policy(256, 0.5, source_account="admin") == "txhash"
+    policy = client.get_subnet_creation_policy()
+
+    assert captured[0][-5:] == [
+        "update_subnet_creation_policy",
+        "--max_subnets",
+        "256",
+        "--subnet_registration_fee",
+        "5000000",
+    ]
+    assert policy is not None
+    assert policy.max_subnets == 256
+    assert policy.subnet_count == 3
+    assert policy.subnet_registration_fee == 0.5

@@ -1,6 +1,6 @@
 from click.testing import CliRunner
 
-from sdk.chain.base import UnbondRequest
+from sdk.chain.base import SubnetCreationPolicy, UnbondRequest
 from sdk.cli import metagraph_cli as metagraph_module
 
 
@@ -70,6 +70,14 @@ class FakeClient:
                 source_account,
             )
         )
+        return "updated"
+
+    def get_subnet_creation_policy(self):
+        self.calls.append(("get_subnet_creation_policy",))
+        return SubnetCreationPolicy(max_subnets=256, subnet_count=2, subnet_registration_fee=0.5)
+
+    def update_subnet_creation_policy(self, max_subnets, subnet_registration_fee, source_account=None):
+        self.calls.append(("update_subnet_creation_policy", max_subnets, subnet_registration_fee, source_account))
         return "updated"
 
 
@@ -205,3 +213,20 @@ def test_update_registration_cli_calls_client(monkeypatch):
 
     assert result.exit_code == 0
     assert ("update_subnet_registration", 100, 25, 2.0, 10.0, 0.1, 1, "admin") in fake.calls
+
+
+def test_subnet_policy_cli_commands(monkeypatch):
+    fake = FakeClient()
+    monkeypatch.setattr(metagraph_module, "_client", lambda: fake)
+    runner = CliRunner()
+
+    show = runner.invoke(metagraph_module.metagraph_cli, ["subnet-policy"])
+    update = runner.invoke(
+        metagraph_module.metagraph_cli,
+        ["update-subnet-policy", "--max-subnets", "256", "--subnet-registration-fee", "0.5", "--source", "admin"],
+    )
+
+    assert show.exit_code == 0
+    assert update.exit_code == 0
+    assert "Subnet Creation Policy" in show.output
+    assert ("update_subnet_creation_policy", 256, 0.5, "admin") in fake.calls
