@@ -387,6 +387,35 @@ class StellarChainClient:
             source_account=source_account,
         )
 
+    def update_subnet_registration(
+        self,
+        max_miners: int,
+        max_validators: int,
+        min_miner_stake: float,
+        min_validator_stake: float,
+        registration_fee: float,
+        subnet_id: Optional[int] = None,
+        source_account: Optional[str] = None,
+    ) -> str:
+        return self.invoke_contract(
+            "update_subnet_registration",
+            [
+                "--subnet_id",
+                str(subnet_id or self.config.subnet_id),
+                "--max_miners",
+                str(max_miners),
+                "--max_validators",
+                str(max_validators),
+                "--min_miner_stake",
+                self._amount_to_contract_units(min_miner_stake),
+                "--min_validator_stake",
+                self._amount_to_contract_units(min_validator_stake),
+                "--registration_fee",
+                str(int(round(registration_fee * self.config.token_amount_scale))),
+            ],
+            source_account=source_account,
+        )
+
     def get_subnet(self, subnet_id: Optional[int] = None) -> Optional[SubnetConfig]:
         raw = self.invoke_contract(
             "get_subnet",
@@ -585,6 +614,11 @@ class StellarChainClient:
             emission_per_cycle=float(data.get("emission_per_cycle", 0)) / self.config.token_amount_scale,
             miner_emission_bps=int(data.get("miner_emission_bps", 0)),
             validator_emission_bps=int(data.get("validator_emission_bps", 0)),
+            max_miners=int(data.get("max_miners", 0)),
+            max_validators=int(data.get("max_validators", 0)),
+            min_miner_stake=float(data.get("min_miner_stake", 0)) / self.config.token_amount_scale,
+            min_validator_stake=float(data.get("min_validator_stake", 0)) / self.config.token_amount_scale,
+            registration_fee=float(data.get("registration_fee", 0)) / self.config.token_amount_scale,
             status=int(data.get("status", 0)),
             created_ledger=int(data.get("created_ledger", 0)),
         )

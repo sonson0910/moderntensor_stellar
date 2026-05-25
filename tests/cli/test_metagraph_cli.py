@@ -48,6 +48,30 @@ class FakeClient:
         )
         return "updated"
 
+    def update_subnet_registration(
+        self,
+        max_miners,
+        max_validators,
+        min_miner_stake,
+        min_validator_stake,
+        registration_fee,
+        subnet_id=None,
+        source_account=None,
+    ):
+        self.calls.append(
+            (
+                "update_subnet_registration",
+                max_miners,
+                max_validators,
+                min_miner_stake,
+                min_validator_stake,
+                registration_fee,
+                subnet_id,
+                source_account,
+            )
+        )
+        return "updated"
+
 
 def test_request_unbond_cli_preserves_rich_output_and_source(monkeypatch):
     fake = FakeClient()
@@ -152,3 +176,32 @@ def test_update_tokenomics_cli_calls_client(monkeypatch):
 
     assert result.exit_code == 0
     assert ("update_subnet_tokenomics", 1.0, 8000, 2000, 1, "admin") in fake.calls
+
+
+def test_update_registration_cli_calls_client(monkeypatch):
+    fake = FakeClient()
+    monkeypatch.setattr(metagraph_module, "_client", lambda: fake)
+
+    result = CliRunner().invoke(
+        metagraph_module.metagraph_cli,
+        [
+            "update-registration",
+            "--subnet-id",
+            "1",
+            "--max-miners",
+            "100",
+            "--max-validators",
+            "25",
+            "--min-miner-stake",
+            "2",
+            "--min-validator-stake",
+            "10",
+            "--registration-fee",
+            "0.1",
+            "--source",
+            "admin",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert ("update_subnet_registration", 100, 25, 2.0, 10.0, 0.1, 1, "admin") in fake.calls

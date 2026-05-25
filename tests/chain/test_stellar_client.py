@@ -293,3 +293,51 @@ def test_update_subnet_tokenomics_serializes_scaled_emission(config, monkeypatch
         "2000",
     ]
     assert captured["args"][captured["args"].index("--source-account") + 1] == "admin"
+
+
+def test_update_subnet_registration_serializes_caps_stakes_and_fee(config, monkeypatch):
+    client = StellarChainClient(config)
+    captured = {}
+    monkeypatch.setattr(client, "_run_stellar_cli", lambda args: captured.setdefault("args", args) and "txhash")
+
+    assert client.update_subnet_registration(100, 25, 2.0, 10.0, 0.1, subnet_id=4, source_account="admin") == "txhash"
+
+    assert captured["args"][-13:] == [
+        "update_subnet_registration",
+        "--subnet_id",
+        "4",
+        "--max_miners",
+        "100",
+        "--max_validators",
+        "25",
+        "--min_miner_stake",
+        "20000000",
+        "--min_validator_stake",
+        "100000000",
+        "--registration_fee",
+        "1000000",
+    ]
+
+
+def test_get_subnet_parses_registration_policy(config, monkeypatch):
+    client = StellarChainClient(config)
+    monkeypatch.setattr(
+        client,
+        "_run_stellar_cli",
+        lambda args: (
+            '{"subnet_id":1,"owner":"GOWNER","commit_authority":"GOWNER","stake_token":"CTOKEN",'
+            '"treasury":"GTREASURY","emission_per_cycle":"10000000","miner_emission_bps":8000,'
+            '"validator_emission_bps":2000,"max_miners":100,"max_validators":25,'
+            '"min_miner_stake":"20000000","min_validator_stake":"100000000",'
+            '"registration_fee":"1000000","status":1,"created_ledger":7}'
+        ),
+    )
+
+    subnet = client.get_subnet()
+
+    assert subnet is not None
+    assert subnet.max_miners == 100
+    assert subnet.max_validators == 25
+    assert subnet.min_miner_stake == 2.0
+    assert subnet.min_validator_stake == 10.0
+    assert subnet.registration_fee == 0.1

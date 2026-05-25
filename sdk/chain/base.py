@@ -94,6 +94,11 @@ class SubnetConfig:
     emission_per_cycle: float
     miner_emission_bps: int
     validator_emission_bps: int
+    max_miners: int
+    max_validators: int
+    min_miner_stake: float
+    min_validator_stake: float
+    registration_fee: float
     status: int
     created_ledger: int = 0
 
@@ -194,3 +199,15 @@ class ChainClient(Protocol):
         source_account: Optional[str] = None,
     ) -> str:
         """Update subnet emission and reward split."""
+
+    def update_subnet_registration(
+        self,
+        max_miners: int,
+        max_validators: int,
+        min_miner_stake: float,
+        min_validator_stake: float,
+        registration_fee: float,
+        subnet_id: Optional[int] = None,
+        source_account: Optional[str] = None,
+    ) -> str:
+        """Update subnet registration caps, minimum stake, and fee."""

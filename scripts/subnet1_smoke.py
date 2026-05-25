@@ -31,6 +31,21 @@ for path in (MODERNTENSOR_ROOT, SUBNET1_ROOT):
     if text not in sys.path:
         sys.path.insert(0, text)
 
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_env_file(MODERNTENSOR_ROOT / ".env")
+_load_env_file(MODERNTENSOR_ROOT / ".env.local")
+
 from sdk.chain.base import ChainCycleCommit, MetagraphUpdate  # noqa: E402
 from sdk.chain.signing import (  # noqa: E402
     MINER_RESULT_DOMAIN,

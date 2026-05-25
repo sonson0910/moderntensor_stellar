@@ -13,6 +13,10 @@ const STATUS_ACTIVE: u32 = 1;
 const STATUS_JAILED: u32 = 2;
 const MAX_ENDPOINT_LEN: u32 = 256;
 const MIN_VALIDATOR_TRUST_WEIGHT: i128 = SCORE_SCALE / 10;
+const DEFAULT_MAX_MINERS: u32 = 10_000;
+const DEFAULT_MAX_VALIDATORS: u32 = 1_000;
+const DEFAULT_MIN_MINER_STAKE: i128 = 1;
+const DEFAULT_MIN_VALIDATOR_STAKE: i128 = 1;
 
 #[contracttype]
 #[derive(Clone, Eq, PartialEq)]
@@ -99,6 +103,11 @@ pub struct SubnetConfig {
     pub emission_per_cycle: i128,
     pub miner_emission_bps: u32,
     pub validator_emission_bps: u32,
+    pub max_miners: u32,
+    pub max_validators: u32,
+    pub min_miner_stake: i128,
+    pub min_validator_stake: i128,
+    pub registration_fee: i128,
     pub status: u32,
     pub created_ledger: u32,
 }
@@ -115,6 +124,7 @@ pub enum DataKey {
     RewardReserve(u32),
     TotalDistributed(u32),
     Unbond(u32, Role, u64),
+    Owner(u32, Role, Address),
 }
 
 #[contract]
@@ -142,6 +152,11 @@ impl MetagraphRegistry {
                 emission_per_cycle: 0,
                 miner_emission_bps: 8_000,
                 validator_emission_bps: 2_000,
+                max_miners: DEFAULT_MAX_MINERS,
+                max_validators: DEFAULT_MAX_VALIDATORS,
+                min_miner_stake: DEFAULT_MIN_MINER_STAKE,
+                min_validator_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                registration_fee: 0,
                 status: STATUS_ACTIVE,
                 created_ledger: env.ledger().sequence(),
             },
@@ -180,6 +195,11 @@ impl MetagraphRegistry {
                 emission_per_cycle,
                 miner_emission_bps,
                 validator_emission_bps,
+                max_miners: DEFAULT_MAX_MINERS,
+                max_validators: DEFAULT_MAX_VALIDATORS,
+                min_miner_stake: DEFAULT_MIN_MINER_STAKE,
+                min_validator_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                registration_fee: 0,
                 status: STATUS_ACTIVE,
                 created_ledger: env.ledger().sequence(),
             },
@@ -203,6 +223,32 @@ impl MetagraphRegistry {
         subnet.emission_per_cycle = emission_per_cycle;
         subnet.miner_emission_bps = miner_emission_bps;
         subnet.validator_emission_bps = validator_emission_bps;
+        Self::write_subnet(&env, subnet);
+    }
+
+    pub fn update_subnet_registration(
+        env: Env,
+        subnet_id: u32,
+        max_miners: u32,
+        max_validators: u32,
+        min_miner_stake: i128,
+        min_validator_stake: i128,
+        registration_fee: i128,
+    ) {
+        let mut subnet = Self::subnet(&env, subnet_id);
+        subnet.owner.require_auth();
+        Self::validate_registration_policy(
+            max_miners,
+            max_validators,
+            min_miner_stake,
+            min_validator_stake,
+            registration_fee,
+        );
+        subnet.max_miners = max_miners;
+        subnet.max_validators = max_validators;
+        subnet.min_miner_stake = min_miner_stake;
+        subnet.min_validator_stake = min_validator_stake;
+        subnet.registration_fee = registration_fee;
         Self::write_subnet(&env, subnet);
     }
 
@@ -771,15 +817,30 @@ impl MetagraphRegistry {
             panic!("subnet inactive");
         }
         Self::validate_endpoint(&endpoint);
-        if stake_amount <= 0 {
-            panic!("invalid stake");
-        }
+        Self::validate_registration_capacity(&env, &subnet, role.clone());
+        Self::validate_role_stake(&subnet, role.clone(), stake_amount);
         let static_key = DataKey::Static(subnet_id, role.clone(), uid);
         if env.storage().persistent().has(&static_key) {
             panic!("duplicate uid");
         }
+        let owner_key = DataKey::Owner(subnet_id, role.clone(), owner.clone());
+        if env.storage().persistent().has(&owner_key) {
+            panic!("duplicate reg key");
+        }
         let token_client = token::Client::new(&env, &subnet.stake_token);
-        token_client.transfer(&owner, &env.current_contract_address(), &stake_amount);
+        let total_deposit = stake_amount + subnet.registration_fee;
+        token_client.transfer(&owner, &env.current_contract_address(), &total_deposit);
+        if subnet.registration_fee > 0 {
+            let reserve_key = DataKey::RewardReserve(subnet_id);
+            let reserve: i128 = env
+                .storage()
+                .persistent()
+                .get::<DataKey, i128>(&reserve_key)
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&reserve_key, &(reserve + subnet.registration_fee));
+        }
         let static_participant = ParticipantStatic {
             uid,
             role: role.clone(),
@@ -804,6 +865,7 @@ impl MetagraphRegistry {
         env.storage()
             .persistent()
             .set(&static_key, &static_participant);
+        env.storage().persistent().set(&owner_key, &uid);
         env.storage()
             .persistent()
             .set(&DataKey::Dynamic(subnet_id, role.clone(), uid), &dynamic);
@@ -1125,6 +1187,44 @@ impl MetagraphRegistry {
         }
     }
 
+    fn validate_registration_policy(
+        max_miners: u32,
+        max_validators: u32,
+        min_miner_stake: i128,
+        min_validator_stake: i128,
+        registration_fee: i128,
+    ) {
+        if max_miners == 0 || max_validators == 0 {
+            panic!("invalid registration cap");
+        }
+        if min_miner_stake <= 0 || min_validator_stake <= 0 || registration_fee < 0 {
+            panic!("invalid registration policy");
+        }
+    }
+
+    fn validate_registration_capacity(env: &Env, subnet: &SubnetConfig, role: Role) {
+        let active_count = Self::active_ids(env, subnet.subnet_id, role.clone()).len();
+        let cap = if role == Role::Miner {
+            subnet.max_miners
+        } else {
+            subnet.max_validators
+        };
+        if active_count >= cap {
+            panic!("registration full");
+        }
+    }
+
+    fn validate_role_stake(subnet: &SubnetConfig, role: Role, stake_amount: i128) {
+        let minimum = if role == Role::Miner {
+            subnet.min_miner_stake
+        } else {
+            subnet.min_validator_stake
+        };
+        if stake_amount < minimum {
+            panic!("stake below minimum");
+        }
+    }
+
     fn validate_endpoint(endpoint: &String) {
         if endpoint.len() == 0 || endpoint.len() > MAX_ENDPOINT_LEN {
             panic!("invalid endpoint");
@@ -1225,6 +1325,75 @@ mod tests {
             &String::from_str(&env, "reason"),
         );
         assert_eq!(client.active_participants(&Role::Miner, &0, &100).len(), 0);
+    }
+
+    #[test]
+    fn registration_policy_caps_min_stake_fee_and_reg_key() {
+        let env = Env::default();
+        let (client, miner_owner, validator_one, _, token_client) = fixture(&env);
+        client
+            .mock_all_auths()
+            .update_subnet_registration(&1, &1, &1, &500, &1_500, &25);
+
+        let before = token_client.balance(&miner_owner);
+        client
+            .mock_all_auths()
+            .register_miner(&1, &miner_owner, &endpoint(&env), &500);
+        assert_eq!(token_client.balance(&miner_owner), before - 525);
+        assert_eq!(client.reward_reserve(&1), 25);
+
+        client
+            .mock_all_auths()
+            .register_validator(&10, &validator_one, &endpoint(&env), &1_500);
+        assert_eq!(client.get_subnet(&1).unwrap().registration_fee, 25);
+    }
+
+    #[test]
+    #[should_panic(expected = "registration full")]
+    fn registration_cap_rejects_extra_active_participant() {
+        let env = Env::default();
+        let (client, miner_owner, _, _, _) = fixture(&env);
+        let second_owner = Address::generate(&env);
+        let token_id = client.get_subnet(&1).unwrap().stake_token;
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+        token_admin_client
+            .mock_all_auths()
+            .mint(&second_owner, &10_000);
+        client
+            .mock_all_auths()
+            .update_subnet_registration(&1, &1, &10, &1, &1, &0);
+        client
+            .mock_all_auths()
+            .register_miner(&1, &miner_owner, &endpoint(&env), &1_000);
+        client
+            .mock_all_auths()
+            .register_miner(&2, &second_owner, &endpoint(&env), &1_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "stake below minimum")]
+    fn registration_min_stake_rejects_underfunded_participant() {
+        let env = Env::default();
+        let (client, miner_owner, _, _, _) = fixture(&env);
+        client
+            .mock_all_auths()
+            .update_subnet_registration(&1, &10, &10, &2_000, &1, &0);
+        client
+            .mock_all_auths()
+            .register_miner(&1, &miner_owner, &endpoint(&env), &1_999);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate reg key")]
+    fn registration_rejects_duplicate_owner_reg_key() {
+        let env = Env::default();
+        let (client, miner_owner, _, _, _) = fixture(&env);
+        client
+            .mock_all_auths()
+            .register_miner(&1, &miner_owner, &endpoint(&env), &1_000);
+        client
+            .mock_all_auths()
+            .register_miner(&2, &miner_owner, &endpoint(&env), &1_000);
     }
 
     #[test]

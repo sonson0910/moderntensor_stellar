@@ -64,6 +64,11 @@ def subnet_cmd(subnet_id):
     table.add_row("emission_per_cycle", f"{subnet.emission_per_cycle:.6f}")
     table.add_row("miner_emission_bps", str(subnet.miner_emission_bps))
     table.add_row("validator_emission_bps", str(subnet.validator_emission_bps))
+    table.add_row("max_miners", str(subnet.max_miners))
+    table.add_row("max_validators", str(subnet.max_validators))
+    table.add_row("min_miner_stake", f"{subnet.min_miner_stake:.6f}")
+    table.add_row("min_validator_stake", f"{subnet.min_validator_stake:.6f}")
+    table.add_row("registration_fee", f"{subnet.registration_fee:.6f}")
     table.add_row("status", str(subnet.status))
     table.add_row("created_ledger", str(subnet.created_ledger))
     console.print(table)
@@ -219,6 +224,35 @@ def update_tokenomics_cmd(subnet_id, emission_per_cycle, miner_emission_bps, val
         source_account=source,
     )
     console.print(Panel(tx or "submitted", title="Update Tokenomics"))
+
+
+@metagraph_cli.command("update-registration")
+@click.option("--subnet-id", default=None, type=int)
+@click.option("--max-miners", required=True, type=int)
+@click.option("--max-validators", required=True, type=int)
+@click.option("--min-miner-stake", required=True, type=float)
+@click.option("--min-validator-stake", required=True, type=float)
+@click.option("--registration-fee", required=True, type=float)
+@click.option("--source", default=None)
+def update_registration_cmd(
+    subnet_id,
+    max_miners,
+    max_validators,
+    min_miner_stake,
+    min_validator_stake,
+    registration_fee,
+    source,
+):
+    tx = _client().update_subnet_registration(
+        max_miners,
+        max_validators,
+        min_miner_stake,
+        min_validator_stake,
+        registration_fee,
+        subnet_id=subnet_id,
+        source_account=source,
+    )
+    console.print(Panel(tx or "submitted", title="Update Registration Policy"))
 
 
 @metagraph_cli.command("unbond-request")
