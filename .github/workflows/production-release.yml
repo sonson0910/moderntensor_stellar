@@ -1,0 +1,41 @@
+name: Production Release Hardening
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      STELLAR_LIVE_TESTNET: "0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Set up Rust target
+        run: rustup target add wasm32v1-none
+
+      - name: Install Stellar CLI
+        uses: stellar/stellar-cli@v26.0.0
+
+      - name: Run production acceptance checks
+        run: scripts/verify_production.sh

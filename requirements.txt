@@ -1,0 +1,12 @@
+click>=8.1,<9
+rich>=13.7,<14
+pydantic>=2.10,<3
+pydantic-settings>=2.7,<3
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+httpx>=0.28,<1
+requests>=2.32,<3
+cryptography>=42,<46
+stellar-sdk>=12,<14
+python-dotenv>=1,<2
+Pillow>=10,<12
